@@ -35,6 +35,11 @@ services:
       - internal
     depends_on:
       - mongo
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   server:
     build:
@@ -49,6 +54,11 @@ services:
       - backend
     networks:
       - internal
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
 volumes:
   frontend:
