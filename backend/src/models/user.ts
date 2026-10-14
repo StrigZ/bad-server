@@ -1,9 +1,9 @@
 /* eslint-disable no-param-reassign */
+import bcrypt from 'bcryptjs'
 import crypto from 'crypto'
-import jwt from 'jsonwebtoken'
+import jwt, { SignOptions } from 'jsonwebtoken'
 import mongoose, { Document, HydratedDocument, Model, Types } from 'mongoose'
 import validator from 'validator'
-import md5 from 'md5'
 
 import { ACCESS_TOKEN, REFRESH_TOKEN } from '../config'
 import UnauthorizedError from '../errors/unauthorized-error'
@@ -41,6 +41,11 @@ interface IUserModel extends Model<IUser, {}, IUserMethods> {
     ) => Promise<HydratedDocument<IUser, IUserMethods>>
 }
 
+const BCRYPT_ROUNDS = 10
+// Хэш-заглушка: сравнение выполняется даже для несуществующего email,
+// чтобы время ответа не показывало, зарегистрирован ли такой пользователь
+const DUMMY_HASH = bcrypt.hashSync('dummy-password', BCRYPT_ROUNDS)
+
 const userSchema = new mongoose.Schema<IUser, IUserModel, IUserMethods>(
     {
         name: {
@@ -54,17 +59,19 @@ const userSchema = new mongoose.Schema<IUser, IUserModel, IUserMethods>(
             type: String,
             required: [true, 'Поле "email" должно быть заполнено'],
             unique: true, // поле email уникально (есть опция unique: true);
+            maxlength: [254, 'Максимальная длина поля "email" - 254'],
             validate: {
                 // для проверки email студенты используют validator
                 validator: (v: string) => validator.isEmail(v),
                 message: 'Поле "email" должно быть валидным email-адресом',
             },
         },
-        // поле password не имеет ограничения на длину, т.к. пароль хранится в виде хэша
+        // пароль хранится в виде bcrypt-хэша; ограничение 72 - предел алгоритма bcrypt
         password: {
             type: String,
             required: [true, 'Поле "password" должно быть заполнено'],
             minlength: [6, 'Минимальная длина поля "password" - 6'],
+            maxlength: [72, 'Максимальная длина поля "password" - 72'],
             select: false,
         },
 
@@ -80,6 +87,7 @@ const userSchema = new mongoose.Schema<IUser, IUserModel, IUserMethods>(
         },
         phone: {
             type: String,
+            maxlength: [25, 'Максимальная длина поля "phone" - 25'],
         },
         lastOrderDate: {
             type: Date,
@@ -102,7 +110,8 @@ const userSchema = new mongoose.Schema<IUser, IUserModel, IUserMethods>(
     {
         versionKey: false,
         timestamps: true,
-        // Возможно удаление пароля в контроллере создания, т.к. select: false не работает в случае создания сущности https://mongoosejs.com/docs/api/document.html#Document.prototype.toJSON()
+        // select: false не работает при создании сущности, поэтому секретные поля
+        // дополнительно вырезаются в toJSON
         toJSON: {
             virtuals: true,
             transform: (_doc, ret) => {
@@ -113,23 +122,15 @@ const userSchema = new mongoose.Schema<IUser, IUserModel, IUserMethods>(
     }
 )
 
-// Возможно добавление хеша в контроллере регистрации
-userSchema.pre('save', async function hashingPassword(next) {
-    try {
-        if (this.isModified('password')) {
-            this.password = md5(this.password)
-        }
-        next()
-    } catch (error) {
-        next(error as Error)
+// Хэширование пароля при создании пользователя или смене пароля
+userSchema.pre('save', async function hashingPassword() {
+    if (this.isModified('password')) {
+        this.password = await bcrypt.hash(this.password, BCRYPT_ROUNDS)
     }
 })
 
-// Можно лучше: централизованное создание accessToken и  refresh токена
-
 userSchema.methods.generateAccessToken = function generateAccessToken() {
     const user = this
-    // Создание accessToken токена возможно в контроллере авторизации
     return jwt.sign(
         {
             _id: user._id.toString(),
@@ -137,7 +138,7 @@ userSchema.methods.generateAccessToken = function generateAccessToken() {
         },
         ACCESS_TOKEN.secret,
         {
-            expiresIn: ACCESS_TOKEN.expiry,
+            expiresIn: ACCESS_TOKEN.expiry as SignOptions['expiresIn'],
             subject: user.id.toString(),
         }
     )
@@ -146,25 +147,23 @@ userSchema.methods.generateAccessToken = function generateAccessToken() {
 userSchema.methods.generateRefreshToken =
     async function generateRefreshToken() {
         const user = this
-        // Создание refresh токена возможно в контроллере авторизации/регистрации
         const refreshToken = jwt.sign(
             {
                 _id: user._id.toString(),
             },
             REFRESH_TOKEN.secret,
             {
-                expiresIn: REFRESH_TOKEN.expiry,
+                expiresIn: REFRESH_TOKEN.expiry as SignOptions['expiresIn'],
                 subject: user.id.toString(),
             }
         )
 
-        // Можно лучше: Создаем хеш refresh токена
+        // В базе хранится только хэш refresh токена
         const rTknHash = crypto
             .createHmac('sha256', REFRESH_TOKEN.secret)
             .update(refreshToken)
             .digest('hex')
 
-        // Сохраняем refresh токена в базу данных, можно делать в контроллере авторизации/регистрации
         user.tokens.push({ token: rTknHash })
         await user.save()
 
@@ -175,14 +174,18 @@ userSchema.statics.findUserByCredentials = async function findByCredentials(
     email: string,
     password: string
 ) {
-    const user = await this.findOne({ email })
-        .select('+password')
-        .orFail(() => new UnauthorizedError('Неправильные почта или пароль'))
-    const passwdMatch = md5(password) === user.password
-    if (!passwdMatch) {
-        return Promise.reject(
-            new UnauthorizedError('Неправильные почта или пароль')
-        )
+    // Типы TypeScript в рантайме не проверяются: клиент может прислать объект вместо строки
+    // ({ "$ne": null }), который превратился бы в оператор MongoDB
+    if (typeof email !== 'string' || typeof password !== 'string') {
+        throw new UnauthorizedError('Неправильные почта или пароль')
+    }
+    const user = await this.findOne({ email }).select('+password')
+    const passwordMatch = await bcrypt.compare(
+        password,
+        user?.password ?? DUMMY_HASH
+    )
+    if (!user || !passwordMatch) {
+        throw new UnauthorizedError('Неправильные почта или пароль')
     }
     return user
 }

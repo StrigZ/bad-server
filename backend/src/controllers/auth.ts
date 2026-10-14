@@ -9,6 +9,17 @@ import ConflictError from '../errors/conflict-error'
 import NotFoundError from '../errors/not-found-error'
 import UnauthorizedError from '../errors/unauthorized-error'
 import User from '../models/user'
+import { isDuplicateKeyError } from '../utils/mongo-errors'
+import pick from '../utils/pick'
+
+interface UserUpdateBody {
+    name?: string
+    email?: string
+    phone?: string
+}
+
+// Поля профиля, которые пользователь может менять сам
+const UPDATABLE_FIELDS = ['name', 'email', 'phone'] as const
 
 // POST /auth/login
 const login = async (req: Request, res: Response, next: NextFunction) => {
@@ -55,7 +66,7 @@ const register = async (req: Request, res: Response, next: NextFunction) => {
         if (error instanceof MongooseError.ValidationError) {
             return next(new BadRequestError(error.message))
         }
-        if (error instanceof Error && error.message.includes('E11000')) {
+        if (isDuplicateKeyError(error)) {
             return next(
                 new ConflictError('Пользователь с таким email уже существует')
             )
@@ -84,23 +95,28 @@ const getCurrentUser = async (
     }
 }
 
-// Можно лучше: вынести общую логику получения данных из refresh токена
-const deleteRefreshTokenInUser = async (
-    req: Request,
-    _res: Response,
-    _next: NextFunction
-) => {
+// Удаляет использованный refresh токен пользователя и возвращает пользователя
+const deleteRefreshTokenInUser = async (req: Request) => {
     const { cookies } = req
     const rfTkn = cookies[REFRESH_TOKEN.cookie.name]
 
-    if (!rfTkn) {
+    if (!rfTkn || typeof rfTkn !== 'string') {
         throw new UnauthorizedError('Не валидный токен')
     }
 
-    const decodedRefreshTkn = jwt.verify(
-        rfTkn,
-        REFRESH_TOKEN.secret
-    ) as JwtPayload
+    let decodedRefreshTkn: JwtPayload
+    try {
+        decodedRefreshTkn = jwt.verify(rfTkn, REFRESH_TOKEN.secret, {
+            algorithms: ['HS256'],
+        }) as JwtPayload
+    } catch {
+        throw new UnauthorizedError('Не валидный токен')
+    }
+
+    if (typeof decodedRefreshTkn._id !== 'string') {
+        throw new UnauthorizedError('Не валидный токен')
+    }
+
     const user = await User.findOne({
         _id: decodedRefreshTkn._id,
     }).orFail(() => new UnauthorizedError('Пользователь не найден в базе'))
@@ -117,11 +133,10 @@ const deleteRefreshTokenInUser = async (
     return user
 }
 
-// Реализация удаления токена из базы может отличаться
 // GET  /auth/logout
 const logout = async (req: Request, res: Response, next: NextFunction) => {
     try {
-        await deleteRefreshTokenInUser(req, res, next)
+        await deleteRefreshTokenInUser(req)
         const expireCookieOptions = {
             ...REFRESH_TOKEN.cookie.options,
             maxAge: -1,
@@ -142,12 +157,8 @@ const refreshAccessToken = async (
     next: NextFunction
 ) => {
     try {
-        const userWithRefreshTkn = await deleteRefreshTokenInUser(
-            req,
-            res,
-            next
-        )
-        const accessToken = await userWithRefreshTkn.generateAccessToken()
+        const userWithRefreshTkn = await deleteRefreshTokenInUser(req)
+        const accessToken = userWithRefreshTkn.generateAccessToken()
         const refreshToken = await userWithRefreshTkn.generateRefreshToken()
         res.cookie(
             REFRESH_TOKEN.cookie.name,
@@ -164,27 +175,17 @@ const refreshAccessToken = async (
     }
 }
 
-const getCurrentUserRoles = async (
-    req: Request,
+// GET /auth/user/roles
+// Пользователь уже загружен из базы в мидлваре auth, повторный запрос не нужен
+const getCurrentUserRoles = (
+    _req: Request,
     res: Response,
-    next: NextFunction
+    _next: NextFunction
 ) => {
-    const userId = res.locals.user._id
-    try {
-        await User.findById(userId, req.body, {
-            new: true,
-        }).orFail(
-            () =>
-                new NotFoundError(
-                    'Пользователь по заданному id отсутствует в базе'
-                )
-        )
-        res.status(200).json(res.locals.user.roles)
-    } catch (error) {
-        next(error)
-    }
+    res.status(200).json(res.locals.user.roles)
 }
 
+// PATCH /auth/me
 const updateCurrentUser = async (
     req: Request,
     res: Response,
@@ -192,9 +193,13 @@ const updateCurrentUser = async (
 ) => {
     const userId = res.locals.user._id
     try {
-        const updatedUser = await User.findByIdAndUpdate(userId, req.body, {
-            new: true,
-        }).orFail(
+        // Только разрешённые поля: roles, tokens, password и операторы Mongo сюда не попадают
+        const update = pick(req.body as UserUpdateBody, UPDATABLE_FIELDS)
+        const updatedUser = await User.findByIdAndUpdate(
+            userId,
+            { $set: update },
+            { new: true, runValidators: true }
+        ).orFail(
             () =>
                 new NotFoundError(
                     'Пользователь по заданному id отсутствует в базе'
@@ -202,7 +207,15 @@ const updateCurrentUser = async (
         )
         res.status(200).json(updatedUser)
     } catch (error) {
-        next(error)
+        if (error instanceof MongooseError.ValidationError) {
+            return next(new BadRequestError(error.message))
+        }
+        if (isDuplicateKeyError(error)) {
+            return next(
+                new ConflictError('Пользователь с таким email уже существует')
+            )
+        }
+        return next(error)
     }
 }
 
