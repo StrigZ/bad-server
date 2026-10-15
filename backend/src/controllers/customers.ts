@@ -1,6 +1,6 @@
 import { NextFunction, Request, Response } from 'express'
 import { FilterQuery, Error as MongooseError, SortOrder } from 'mongoose'
-import { CUSTOMER_SORT_FIELDS } from '../constants/query'
+import { CUSTOMER_SORT_FIELDS, MAX_LIST_PAGE_SIZE } from '../constants/query'
 import BadRequestError from '../errors/bad-request-error'
 import ConflictError from '../errors/conflict-error'
 import NotFoundError from '../errors/not-found-error'
@@ -60,7 +60,12 @@ export const getCustomers = async (
 ) => {
     try {
         const query = req.query as CustomersQuery
-        const { page, limit, skip } = getPagination(query.page, query.limit, 10)
+        const { page, limit, skip } = getPagination(
+            query.page,
+            query.limit,
+            10,
+            MAX_LIST_PAGE_SIZE
+        )
 
         const filters: FilterQuery<IUser> = {}
 

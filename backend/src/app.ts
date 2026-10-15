@@ -26,9 +26,11 @@ app.set('query parser', 'simple')
 
 // Заголовки безопасности; скрывает X-Powered-By
 app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }))
+// Один разрешённый источник передаётся строкой: заголовок Access-Control-Allow-Origin
+// выставляется всегда. Несколько источников - списком (проверяется заголовок Origin запроса).
 app.use(
     cors({
-        origin: ORIGIN_ALLOW.length ? ORIGIN_ALLOW : false,
+        origin: ORIGIN_ALLOW.length === 1 ? ORIGIN_ALLOW[0] : ORIGIN_ALLOW,
         credentials: true,
     })
 )

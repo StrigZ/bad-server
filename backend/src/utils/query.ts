@@ -9,11 +9,13 @@ export const isPresent = (value: unknown): value is string | number =>
 export const getPagination = (
     pageValue: unknown,
     limitValue: unknown,
-    defaultLimit: number
+    defaultLimit: number,
+    maxLimit: number = MAX_PAGE_SIZE
 ) => {
     const page = Math.min(MAX_PAGE, Math.max(1, Math.floor(Number(pageValue)) || 1))
+    // Слишком большой limit не отклоняется, а приводится к максимуму
     const limit = Math.min(
-        MAX_PAGE_SIZE,
+        maxLimit,
         Math.max(1, Math.floor(Number(limitValue)) || defaultLimit)
     )
     return { page, limit, skip: (page - 1) * limit }

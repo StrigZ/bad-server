@@ -47,9 +47,8 @@ export const REFRESH_TOKEN = {
     },
 }
 
-// Разрешённые источники для CORS через запятую. Если не задано, CORS выключен
-// (интерфейс и API работают на одном домене через nginx).
-export const ORIGIN_ALLOW = (process.env.ORIGIN_ALLOW ?? '')
+// Разрешённые источники для CORS через запятую (по умолчанию - dev-сервер интерфейса)
+export const ORIGIN_ALLOW = (process.env.ORIGIN_ALLOW ?? 'http://localhost:5173')
     .split(',')
     .map((origin) => origin.trim())
     .filter(Boolean)
@@ -58,6 +57,11 @@ export const ORIGIN_ALLOW = (process.env.ORIGIN_ALLOW ?? '')
 const trustProxy = Number(process.env.TRUST_PROXY ?? 1)
 export const TRUST_PROXY = Number.isNaN(trustProxy) ? 1 : trustProxy
 
-export const RATE_LIMIT_WINDOW_MS = 60 * 1000
-export const RATE_LIMIT_MAX = Number(process.env.RATE_LIMIT_MAX) || 100
+// Общий лимит: не более RATE_LIMIT_MAX запросов с одного IP за короткое окно.
+// Короткое окно сразу отсекает всплеск запросов (DDoS), а обычная работа пользователя
+// (несколько запросов в секунду) лимит не задевает.
+export const RATE_LIMIT_WINDOW_MS = Number(process.env.RATE_LIMIT_WINDOW_MS) || 10 * 1000
+export const RATE_LIMIT_MAX = Number(process.env.RATE_LIMIT_MAX) || 20
+// Вход и регистрация: строже и на более длинном окне (защита от перебора паролей)
+export const AUTH_RATE_LIMIT_WINDOW_MS = 60 * 1000
 export const AUTH_RATE_LIMIT_MAX = Number(process.env.AUTH_RATE_LIMIT_MAX) || 20

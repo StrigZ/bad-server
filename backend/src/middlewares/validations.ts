@@ -2,8 +2,6 @@ import { Joi, Segments, celebrate } from 'celebrate'
 import { PaymentType, StatusType, phoneRegExp } from '../constants/order'
 import {
     CUSTOMER_SORT_FIELDS,
-    MAX_PAGE,
-    MAX_PAGE_SIZE,
     MAX_SEARCH_LENGTH,
     ORDER_SORT_FIELDS,
 } from '../constants/query'
@@ -48,19 +46,22 @@ const requiredEmail = Joi.string()
     })
 const phone = Joi.string().max(25).pattern(phoneRegExp)
 
-const page = Joi.number().integer().min(1).max(MAX_PAGE).default(1)
+// page и limit: должны быть положительными целыми; слишком большие значения не отклоняются,
+// а ограничиваются в контроллере (getPagination)
+const page = Joi.number().integer().min(1).unsafe().default(1)
 const limit = (defaultValue: number) =>
-    Joi.number().integer().min(1).max(MAX_PAGE_SIZE).default(defaultValue)
+    Joi.number().integer().min(1).unsafe().default(defaultValue)
 const sortOrder = Joi.string().valid('asc', 'desc').default('desc')
 const search = Joi.string().max(MAX_SEARCH_LENGTH).allow('')
 const dateFilter = Joi.string().isoDate().allow('')
 const amountFilter = Joi.number().min(0).allow('')
 const countFilter = Joi.number().integer().min(0).allow('')
 
-// Query-параметры: неизвестные ключи отбрасываются, значения проверяются по типу и допустимому набору
+// Query-параметры: неизвестные ключи (в том числе status[$ne]=...) отклоняются,
+// значения проверяются по типу и допустимому набору
 const querySchema = (keys: Parameters<typeof Joi.object>[0]) =>
     celebrate({
-        [Segments.QUERY]: Joi.object(keys).options({ stripUnknown: true }),
+        [Segments.QUERY]: Joi.object(keys),
     })
 
 export const validateOrderBody = celebrate({

@@ -6,6 +6,9 @@ import BadRequestError from '../errors/bad-request-error'
 import hasValidFileContent from '../utils/file-signature'
 import { sanitizeText } from '../utils/sanitize'
 
+// Слишком маленькие файлы не могут быть настоящими изображениями
+const MIN_FILE_SIZE = 2 * 1024
+
 export const uploadFile = async (
     req: Request,
     res: Response,
@@ -15,6 +18,11 @@ export const uploadFile = async (
         return next(new BadRequestError('Файл не загружен'))
     }
     try {
+        if (req.file.size < MIN_FILE_SIZE) {
+            await unlink(req.file.path).catch(() => undefined)
+            return next(new BadRequestError('Размер файла меньше 2 КБ'))
+        }
+
         // Тип из заголовка запроса задаёт клиент, поэтому проверяем само содержимое файла
         const isValid = await hasValidFileContent(
             req.file.path,

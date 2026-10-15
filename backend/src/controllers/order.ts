@@ -1,7 +1,7 @@
 import { NextFunction, Request, Response } from 'express'
 import { FilterQuery, Error as MongooseError, PipelineStage } from 'mongoose'
 import { StatusType } from '../constants/order'
-import { ORDER_SORT_FIELDS } from '../constants/query'
+import { MAX_LIST_PAGE_SIZE, ORDER_SORT_FIELDS } from '../constants/query'
 import BadRequestError from '../errors/bad-request-error'
 import NotFoundError from '../errors/not-found-error'
 import Order, { IOrder } from '../models/order'
@@ -48,7 +48,12 @@ export const getOrders = async (
 ) => {
     try {
         const query = req.query as OrdersQuery
-        const { page, limit, skip } = getPagination(query.page, query.limit, 10)
+        const { page, limit, skip } = getPagination(
+            query.page,
+            query.limit,
+            10,
+            MAX_LIST_PAGE_SIZE
+        )
 
         const filters: FilterQuery<IOrder> = {}
 
