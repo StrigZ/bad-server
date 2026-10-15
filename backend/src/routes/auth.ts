@@ -22,8 +22,8 @@ authRouter.get('/user', auth, getCurrentUser)
 authRouter.patch('/me', auth, validateUserUpdateBody, updateCurrentUser)
 authRouter.get('/user/roles', auth, getCurrentUserRoles)
 authRouter.post('/login', authLimiter, validateAuthentication, login)
-authRouter.get('/token', refreshAccessToken)
-authRouter.get('/logout', logout)
+authRouter.post('/token', refreshAccessToken)
+authRouter.post('/logout', logout)
 authRouter.post('/register', authLimiter, validateUserBody, register)
 
 export default authRouter

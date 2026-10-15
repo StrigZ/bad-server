@@ -11,6 +11,7 @@ import {
     PUBLIC_DIR,
     TRUST_PROXY,
 } from './config'
+import csrfProtection from './middlewares/csrf'
 import errorHandler from './middlewares/error-handler'
 import { apiLimiter } from './middlewares/rate-limit'
 import serveStatic from './middlewares/serverStatic'
@@ -37,6 +38,7 @@ app.use(serveStatic(PUBLIC_DIR))
 
 app.use(apiLimiter)
 app.use(cookieParser())
+app.use(csrfProtection)
 app.use(urlencoded({ extended: false, limit: '100kb', parameterLimit: 50 }))
 app.use(json({ limit: '100kb' }))
 
