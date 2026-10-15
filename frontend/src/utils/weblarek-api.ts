@@ -44,7 +44,7 @@ class Api {
     }
 
     protected ensureCsrfToken = async () => {
-        if (!getCookie('csrfToken')) {
+        if (!getCookie('_csrf')) {
             await this.request('/auth/csrf-token', { method: 'GET' })
         }
     }
@@ -63,7 +63,7 @@ class Api {
         try {
             const method = (options.method ?? 'GET').toUpperCase()
             const csrfHeaders: Record<string, string> =
-                method === 'GET' ? {} : { 'X-CSRF-Token': getCookie('csrfToken') ?? '' }
+                method === 'GET' ? {} : { 'X-CSRF-Token': getCookie('_csrf') ?? '' }
             const res = await fetch(`${this.baseUrl}${endpoint}`, {
                 credentials: 'include',
                 ...this.options,

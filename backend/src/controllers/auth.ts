@@ -26,8 +26,8 @@ const UPDATABLE_FIELDS = ['name', 'email', 'phone'] as const
 // Выдаёт CSRF-токен: он кладётся в cookie и возвращается в теле ответа.
 // Клиент присылает его в заголовке X-CSRF-Token со всеми запросами, меняющими данные
 // (в том числе перед входом и регистрацией).
-const getCsrfToken = (_req: Request, res: Response) => {
-    const csrfToken = issueCsrfToken(res)
+const getCsrfToken = (req: Request, res: Response) => {
+    const csrfToken = issueCsrfToken(req, res)
     res.json({ csrfToken })
 }
 
@@ -43,7 +43,7 @@ const login = async (req: Request, res: Response, next: NextFunction) => {
             refreshToken,
             REFRESH_TOKEN.cookie.options
         )
-        issueCsrfToken(res)
+        issueCsrfToken(req, res)
         return res.json({
             success: true,
             user,
@@ -68,7 +68,7 @@ const register = async (req: Request, res: Response, next: NextFunction) => {
             refreshToken,
             REFRESH_TOKEN.cookie.options
         )
-        issueCsrfToken(res)
+        issueCsrfToken(req, res)
         return res.status(constants.HTTP_STATUS_CREATED).json({
             success: true,
             user: newUser,
@@ -178,7 +178,7 @@ const refreshAccessToken = async (
             refreshToken,
             REFRESH_TOKEN.cookie.options
         )
-        issueCsrfToken(res)
+        issueCsrfToken(req, res)
         return res.json({
             success: true,
             user: userWithRefreshTkn,
@@ -241,6 +241,5 @@ export {
     logout,
     refreshAccessToken,
     register,
-    updateCurrentUser
+    updateCurrentUser,
 }
-
