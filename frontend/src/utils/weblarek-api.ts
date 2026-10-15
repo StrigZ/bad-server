@@ -43,6 +43,12 @@ class Api {
         }
     }
 
+    protected ensureCsrfToken = async () => {
+        if (!getCookie('_csrf')) {
+            await this.request('/auth/csrf-token', { method: 'GET' })
+        }
+    }
+
     protected handleResponse<T>(response: Response): Promise<T> {
         return response.ok
             ? response.json()
@@ -55,9 +61,18 @@ class Api {
 
     protected async request<T>(endpoint: string, options: RequestInit) {
         try {
+            const method = (options.method ?? 'GET').toUpperCase()
+            const csrfHeaders: Record<string, string> =
+                method === 'GET' ? {} : { 'X-CSRF-Token': getCookie('_csrf') ?? '' }
             const res = await fetch(`${this.baseUrl}${endpoint}`, {
+                credentials: 'include',
                 ...this.options,
                 ...options,
+                headers: {
+                    ...(this.options.headers as Record<string, string>),
+                    ...(options.headers as Record<string, string>),
+                    ...csrfHeaders,
+                },
             })
             return await this.handleResponse<T>(res)
         } catch (error) {
@@ -67,7 +82,7 @@ class Api {
 
     private refreshToken = () => {
         return this.request<UserResponseToken>('/auth/token', {
-            method: 'GET',
+            method: 'POST',
             credentials: 'include',
         })
     }
@@ -226,7 +241,8 @@ export class WebLarekAPI extends Api implements IWebLarekAPI {
         )
     }
 
-    loginUser = (data: UserLoginBodyDto) => {
+    loginUser = async (data: UserLoginBodyDto) => {
+        await this.ensureCsrfToken();
         return this.request<UserResponseToken>('/auth/login', {
             method: 'POST',
             body: JSON.stringify(data),
@@ -237,7 +253,8 @@ export class WebLarekAPI extends Api implements IWebLarekAPI {
         })
     }
 
-    registerUser = (data: UserRegisterBodyDto) => {
+    registerUser = async (data: UserRegisterBodyDto) => {
+        await this.ensureCsrfToken();
         return this.request<UserResponseToken>('/auth/register', {
             method: 'POST',
             body: JSON.stringify(data),
@@ -293,13 +310,12 @@ export class WebLarekAPI extends Api implements IWebLarekAPI {
 
     logoutUser = () => {
         return this.request<ServerResponse<unknown>>('/auth/logout', {
-            method: 'GET',
+            method: 'POST',
             credentials: 'include',
         })
     }
 
     createProduct = (data: Omit<IProduct, '_id'>) => {
-        console.log(data)
         return this.requestWithRefresh<IProduct>('/product', {
             method: 'POST',
             body: JSON.stringify(data),

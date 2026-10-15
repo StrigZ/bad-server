@@ -1,24 +1,67 @@
+import 'dotenv/config'
+import crypto from 'crypto'
 import { CookieOptions } from 'express'
 import ms from 'ms'
+import path from 'path'
 
 export const { PORT = '3000' } = process.env
 export const { DB_ADDRESS = 'mongodb://127.0.0.1:27017/weblarek' } = process.env
-export const { JWT_SECRET = 'JWT_SECRET' } = process.env
+
+export const PUBLIC_DIR = path.join(__dirname, 'public')
+export const UPLOAD_PATH = process.env.UPLOAD_PATH ?? ''
+export const UPLOAD_PATH_TEMP = process.env.UPLOAD_PATH_TEMP ?? ''
+
+// Секреты берутся только из окружения. Если переменная не задана, генерируется
+// случайный секрет на время жизни процесса: известного заранее значения по умолчанию нет,
+// поэтому подделать токен нельзя (но после перезапуска токены перестанут действовать).
+const getSecret = (name: string): string => {
+    const value = process.env[name]
+    if (value) {
+        return value
+    }
+    // eslint-disable-next-line no-console
+    console.warn(`[config] ${name} не задан, используется временный случайный секрет`)
+    return crypto.randomBytes(32).toString('hex')
+}
+
 export const ACCESS_TOKEN = {
-    secret: process.env.AUTH_ACCESS_TOKEN_SECRET || 'secret-dev',
+    secret: getSecret('AUTH_ACCESS_TOKEN_SECRET'),
     expiry: process.env.AUTH_ACCESS_TOKEN_EXPIRY || '10m',
 }
+
 export const REFRESH_TOKEN = {
-    secret: process.env.AUTH_REFRESH_TOKEN_SECRET || 'secret-dev',
+    secret: getSecret('AUTH_REFRESH_TOKEN_SECRET'),
     expiry: process.env.AUTH_REFRESH_TOKEN_EXPIRY || '7d',
     cookie: {
         name: 'refreshToken',
         options: {
             httpOnly: true,
-            sameSite: 'lax',
-            secure: false,
+            // strict: cookie не уходит на запросы, инициированные с чужих сайтов (защита от CSRF
+            // для /auth/token и /auth/logout)
+            sameSite: 'strict',
+            // для https-окружения задайте COOKIE_SECURE=true
+            secure: process.env.COOKIE_SECURE === 'true',
             maxAge: ms(process.env.AUTH_REFRESH_TOKEN_EXPIRY || '7d'),
             path: '/',
         } as CookieOptions,
     },
 }
+
+// Разрешённые источники для CORS через запятую (по умолчанию - dev-сервер интерфейса)
+export const ORIGIN_ALLOW = (process.env.ORIGIN_ALLOW ?? 'http://localhost:5173')
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean)
+
+// Количество прокси перед приложением (nginx = 1), нужно для корректного IP в rate limit
+const trustProxy = Number(process.env.TRUST_PROXY ?? 1)
+export const TRUST_PROXY = Number.isNaN(trustProxy) ? 1 : trustProxy
+
+// Общий лимит: не более RATE_LIMIT_MAX запросов с одного IP за короткое окно.
+// Короткое окно сразу отсекает всплеск запросов (DDoS), а обычная работа пользователя
+// (несколько запросов в секунду) лимит не задевает.
+export const RATE_LIMIT_WINDOW_MS = Number(process.env.RATE_LIMIT_WINDOW_MS) || 10 * 1000
+export const RATE_LIMIT_MAX = Number(process.env.RATE_LIMIT_MAX) || 20
+// Вход и регистрация: строже и на более длинном окне (защита от перебора паролей)
+export const AUTH_RATE_LIMIT_WINDOW_MS = 60 * 1000
+export const AUTH_RATE_LIMIT_MAX = Number(process.env.AUTH_RATE_LIMIT_MAX) || 20

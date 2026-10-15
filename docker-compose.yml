@@ -35,6 +35,17 @@ services:
       - internal
     depends_on:
       - mongo
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3000/product').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 20s
 
   server:
     build:
@@ -45,10 +56,17 @@ services:
       - frontend:/var/app
       - public:/var/public
     depends_on:
-      - frontend
-      - backend
+      frontend:
+        condition: service_started
+      backend:
+        condition: service_healthy
     networks:
       - internal
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
 volumes:
   frontend:

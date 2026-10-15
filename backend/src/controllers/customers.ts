@@ -1,98 +1,121 @@
 import { NextFunction, Request, Response } from 'express'
-import { FilterQuery } from 'mongoose'
+import { FilterQuery, Error as MongooseError, SortOrder } from 'mongoose'
+import { CUSTOMER_SORT_FIELDS, MAX_LIST_PAGE_SIZE } from '../constants/query'
+import BadRequestError from '../errors/bad-request-error'
+import ConflictError from '../errors/conflict-error'
 import NotFoundError from '../errors/not-found-error'
 import Order from '../models/order'
 import User, { IUser } from '../models/user'
+import escapeRegExp from '../utils/escapeRegExp'
+import { isDuplicateKeyError } from '../utils/mongo-errors'
+import pick from '../utils/pick'
+import { QueryValue, getPagination, isPresent } from '../utils/query'
 
-// TODO: Добавить guard admin
-// eslint-disable-next-line max-len
-// Get GET /customers?page=2&limit=5&sort=totalAmount&order=desc&registrationDateFrom=2023-01-01&registrationDateTo=2023-12-31&lastOrderDateFrom=2023-01-01&lastOrderDateTo=2023-12-31&totalAmountFrom=100&totalAmountTo=1000&orderCountFrom=1&orderCountTo=10
+interface CustomersQuery {
+    page?: QueryValue
+    limit?: QueryValue
+    sortField?: QueryValue
+    sortOrder?: QueryValue
+    registrationDateFrom?: QueryValue
+    registrationDateTo?: QueryValue
+    lastOrderDateFrom?: QueryValue
+    lastOrderDateTo?: QueryValue
+    totalAmountFrom?: QueryValue
+    totalAmountTo?: QueryValue
+    orderCountFrom?: QueryValue
+    orderCountTo?: QueryValue
+    search?: QueryValue
+}
+
+interface CustomerUpdateBody {
+    name?: string
+    email?: string
+    phone?: string
+}
+
+const UPDATABLE_FIELDS = ['name', 'email', 'phone'] as const
+
+interface DateRange {
+    $gte?: Date
+    $lte?: Date
+}
+
+interface NumberRange {
+    $gte?: number
+    $lte?: number
+}
+
+const endOfDay = (value: string | number) => {
+    const date = new Date(value)
+    date.setHours(23, 59, 59, 999)
+    return date
+}
+
+// Доступ только для администратора (гард на роутере)
+// GET /customers?page=2&limit=5&sortField=totalAmount&sortOrder=desc&...
 export const getCustomers = async (
     req: Request,
     res: Response,
     next: NextFunction
 ) => {
     try {
-        const {
-            page = 1,
-            limit = 10,
-            sortField = 'createdAt',
-            sortOrder = 'desc',
-            registrationDateFrom,
-            registrationDateTo,
-            lastOrderDateFrom,
-            lastOrderDateTo,
-            totalAmountFrom,
-            totalAmountTo,
-            orderCountFrom,
-            orderCountTo,
-            search,
-        } = req.query
+        const query = req.query as CustomersQuery
+        const { page, limit, skip } = getPagination(
+            query.page,
+            query.limit,
+            10,
+            MAX_LIST_PAGE_SIZE
+        )
 
-        const filters: FilterQuery<Partial<IUser>> = {}
+        const filters: FilterQuery<IUser> = {}
 
-        if (registrationDateFrom) {
-            filters.createdAt = {
-                ...filters.createdAt,
-                $gte: new Date(registrationDateFrom as string),
-            }
+        const createdAt: DateRange = {}
+        if (isPresent(query.registrationDateFrom)) {
+            createdAt.$gte = new Date(query.registrationDateFrom)
+        }
+        if (isPresent(query.registrationDateTo)) {
+            createdAt.$lte = endOfDay(query.registrationDateTo)
+        }
+        if (Object.keys(createdAt).length) {
+            filters.createdAt = createdAt
         }
 
-        if (registrationDateTo) {
-            const endOfDay = new Date(registrationDateTo as string)
-            endOfDay.setHours(23, 59, 59, 999)
-            filters.createdAt = {
-                ...filters.createdAt,
-                $lte: endOfDay,
-            }
+        const lastOrderDate: DateRange = {}
+        if (isPresent(query.lastOrderDateFrom)) {
+            lastOrderDate.$gte = new Date(query.lastOrderDateFrom)
+        }
+        if (isPresent(query.lastOrderDateTo)) {
+            lastOrderDate.$lte = endOfDay(query.lastOrderDateTo)
+        }
+        if (Object.keys(lastOrderDate).length) {
+            filters.lastOrderDate = lastOrderDate
         }
 
-        if (lastOrderDateFrom) {
-            filters.lastOrderDate = {
-                ...filters.lastOrderDate,
-                $gte: new Date(lastOrderDateFrom as string),
-            }
+        const totalAmount: NumberRange = {}
+        if (isPresent(query.totalAmountFrom)) {
+            totalAmount.$gte = Number(query.totalAmountFrom)
+        }
+        if (isPresent(query.totalAmountTo)) {
+            totalAmount.$lte = Number(query.totalAmountTo)
+        }
+        if (Object.keys(totalAmount).length) {
+            filters.totalAmount = totalAmount
         }
 
-        if (lastOrderDateTo) {
-            const endOfDay = new Date(lastOrderDateTo as string)
-            endOfDay.setHours(23, 59, 59, 999)
-            filters.lastOrderDate = {
-                ...filters.lastOrderDate,
-                $lte: endOfDay,
-            }
+        const orderCount: NumberRange = {}
+        if (isPresent(query.orderCountFrom)) {
+            orderCount.$gte = Number(query.orderCountFrom)
+        }
+        if (isPresent(query.orderCountTo)) {
+            orderCount.$lte = Number(query.orderCountTo)
+        }
+        if (Object.keys(orderCount).length) {
+            filters.orderCount = orderCount
         }
 
-        if (totalAmountFrom) {
-            filters.totalAmount = {
-                ...filters.totalAmount,
-                $gte: Number(totalAmountFrom),
-            }
-        }
-
-        if (totalAmountTo) {
-            filters.totalAmount = {
-                ...filters.totalAmount,
-                $lte: Number(totalAmountTo),
-            }
-        }
-
-        if (orderCountFrom) {
-            filters.orderCount = {
-                ...filters.orderCount,
-                $gte: Number(orderCountFrom),
-            }
-        }
-
-        if (orderCountTo) {
-            filters.orderCount = {
-                ...filters.orderCount,
-                $lte: Number(orderCountTo),
-            }
-        }
-
-        if (search) {
-            const searchRegex = new RegExp(search as string, 'i')
+        if (isPresent(query.search)) {
+            // Спецсимволы экранируются: пользователь не может задать свою регулярку
+            const searchRegex = new RegExp(escapeRegExp(String(query.search)), 'i')
             const orders = await Order.find(
                 {
                     $or: [{ deliveryAddress: searchRegex }],
@@ -108,17 +131,15 @@ export const getCustomers = async (
             ]
         }
 
-        const sort: { [key: string]: any } = {}
-
-        if (sortField && sortOrder) {
-            sort[sortField as string] = sortOrder === 'desc' ? -1 : 1
+        // Поле сортировки только из белого списка
+        const sortField =
+            CUSTOMER_SORT_FIELDS.find((field) => field === query.sortField) ??
+            'createdAt'
+        const sort: Record<string, SortOrder> = {
+            [sortField]: query.sortOrder === 'asc' ? 1 : -1,
         }
 
-        const options = {
-            sort,
-            skip: (Number(page) - 1) * Number(limit),
-            limit: Number(limit),
-        }
+        const options = { sort, skip, limit }
 
         const users = await User.find(filters, null, options).populate([
             'orders',
@@ -137,15 +158,15 @@ export const getCustomers = async (
         ])
 
         const totalUsers = await User.countDocuments(filters)
-        const totalPages = Math.ceil(totalUsers / Number(limit))
+        const totalPages = Math.ceil(totalUsers / limit)
 
         res.status(200).json({
             customers: users,
             pagination: {
                 totalUsers,
                 totalPages,
-                currentPage: Number(page),
-                pageSize: Number(limit),
+                currentPage: page,
+                pageSize: limit,
             },
         })
     } catch (error) {
@@ -153,7 +174,6 @@ export const getCustomers = async (
     }
 }
 
-// TODO: Добавить guard admin
 // Get /customers/:id
 export const getCustomerById = async (
     req: Request,
@@ -161,17 +181,20 @@ export const getCustomerById = async (
     next: NextFunction
 ) => {
     try {
-        const user = await User.findById(req.params.id).populate([
-            'orders',
-            'lastOrder',
-        ])
+        const user = await User.findById(req.params.id)
+            .populate(['orders', 'lastOrder'])
+            .orFail(
+                () =>
+                    new NotFoundError(
+                        'Пользователь по заданному id отсутствует в базе'
+                    )
+            )
         res.status(200).json(user)
     } catch (error) {
         next(error)
     }
 }
 
-// TODO: Добавить guard admin
 // Patch /customers/:id
 export const updateCustomer = async (
     req: Request,
@@ -179,12 +202,12 @@ export const updateCustomer = async (
     next: NextFunction
 ) => {
     try {
+        // Только разрешённые поля, статистику и роли через этот роут менять нельзя
+        const update = pick(req.body as CustomerUpdateBody, UPDATABLE_FIELDS)
         const updatedUser = await User.findByIdAndUpdate(
             req.params.id,
-            req.body,
-            {
-                new: true,
-            }
+            { $set: update },
+            { new: true, runValidators: true }
         )
             .orFail(
                 () =>
@@ -195,11 +218,18 @@ export const updateCustomer = async (
             .populate(['orders', 'lastOrder'])
         res.status(200).json(updatedUser)
     } catch (error) {
-        next(error)
+        if (error instanceof MongooseError.ValidationError) {
+            return next(new BadRequestError(error.message))
+        }
+        if (isDuplicateKeyError(error)) {
+            return next(
+                new ConflictError('Пользователь с таким email уже существует')
+            )
+        }
+        return next(error)
     }
 }
 
-// TODO: Добавить guard admin
 // Delete /customers/:id
 export const deleteCustomer = async (
     req: Request,
