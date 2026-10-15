@@ -43,6 +43,12 @@ class Api {
         }
     }
 
+    protected ensureCsrfToken = async () => {
+        if (!getCookie('csrfToken')) {
+            await this.request('/auth/csrf-token', { method: 'GET' })
+        }
+    }
+
     protected handleResponse<T>(response: Response): Promise<T> {
         return response.ok
             ? response.json()
@@ -235,7 +241,8 @@ export class WebLarekAPI extends Api implements IWebLarekAPI {
         )
     }
 
-    loginUser = (data: UserLoginBodyDto) => {
+    loginUser = async (data: UserLoginBodyDto) => {
+        await this.ensureCsrfToken();
         return this.request<UserResponseToken>('/auth/login', {
             method: 'POST',
             body: JSON.stringify(data),
@@ -246,7 +253,8 @@ export class WebLarekAPI extends Api implements IWebLarekAPI {
         })
     }
 
-    registerUser = (data: UserRegisterBodyDto) => {
+    registerUser = async (data: UserRegisterBodyDto) => {
+        await this.ensureCsrfToken();
         return this.request<UserResponseToken>('/auth/register', {
             method: 'POST',
             body: JSON.stringify(data),

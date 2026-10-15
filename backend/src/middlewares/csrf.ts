@@ -4,17 +4,17 @@ import { REFRESH_TOKEN } from '../config'
 import ForbiddenError from '../errors/forbidden-error'
 
 export const CSRF_COOKIE = 'csrfToken'
-export const CSRF_HEADER = 'x-csrf-token'
+// Допустимые имена заголовка, в котором клиент присылает токен
+export const CSRF_HEADERS = ['x-csrf-token', 'csrf-token', 'x-xsrf-token']
 
 const SAFE_METHODS = ['GET', 'HEAD', 'OPTIONS']
-// Вход и регистрация выполняются до появления токена (cookie ещё нет)
-const EXEMPT_PATHS = ['/auth/login', '/auth/register']
-
 const cookieOptions = { ...REFRESH_TOKEN.cookie.options, httpOnly: false }
 
 // Выдаёт новый случайный CSRF-токен в cookie (читается JS-кодом интерфейса)
-export const issueCsrfToken = (res: Response) => {
-    res.cookie(CSRF_COOKIE, crypto.randomBytes(32).toString('hex'), cookieOptions)
+export const issueCsrfToken = (res: Response): string => {
+    const token = crypto.randomBytes(32).toString('hex')
+    res.cookie(CSRF_COOKIE, token, cookieOptions)
+    return token
 }
 
 export const clearCsrfToken = (res: Response) => {
@@ -30,11 +30,13 @@ const isEqual = (a: string, b: string) => {
 // Double submit cookie: значение из cookie должно совпасть со значением в заголовке.
 // Чужой сайт не может ни прочитать cookie, ни выставить свой заголовок.
 const csrfProtection = (req: Request, _res: Response, next: NextFunction) => {
-    if (SAFE_METHODS.includes(req.method) || EXEMPT_PATHS.includes(req.path)) {
+    if (SAFE_METHODS.includes(req.method)) {
         return next()
     }
     const cookieToken = req.cookies?.[CSRF_COOKIE]
-    const headerToken = req.header(CSRF_HEADER)
+    const headerToken = CSRF_HEADERS.map((name) => req.header(name)).find(
+        (value) => typeof value === 'string' && value.length > 0
+    )
     if (
         typeof cookieToken !== 'string' ||
         typeof headerToken !== 'string' ||
